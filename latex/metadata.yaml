@@ -1,0 +1,50 @@
+---
+title: "Rampart — A Local-First System for PII Redaction"
+author:
+  - National Design Studio
+date: 2026
+abstract: |
+  We describe **Rampart**, a local-first system for removing personally
+  identifiable information from user-typed text before it leaves the browser. The
+  system combines a 14.7 MB ONNX token-classification model with a deterministic
+  recognizer layer; together the two layers form the first gate of a
+  defense-in-depth pipeline. Across the seven Latin-script languages the model was
+  trained on, on a 30,000-row held-out test set drawn from the OpenPII 1.5M corpus,
+  the full system achieves 98.42% private-term recall at 6.6 ms median latency in
+  Node ONNX, and runs at 3.9 ms p50 on WebGPU in the browser. Rampart is harm
+  reduction, not perfect protection: redacting in the browser shifts the trust
+  boundary so that a downstream failure can only leak what the client failed to
+  remove. This document describes the architecture, the alternatives evaluated and
+  rejected, the training and evaluation methodology, operating-point and
+  calibration analysis, known failure modes, and the licensing under which the
+  system is released.
+keywords:
+  - PII redaction
+  - privacy
+  - token classification
+  - on-device inference
+  - defense in depth
+bibliography: references.bib
+reference-section-title: References
+link-citations: true
+nocite: |
+  @*
+geometry: margin=1in
+colorlinks: true
+linkcolor: RoyalBlue
+urlcolor: RoyalBlue
+citecolor: RoyalBlue
+numbersections: false
+mainfont: "Helvetica Neue"
+monofont: "Menlo"
+fontsize: 11pt
+header-includes: |
+  \usepackage{xurl}
+  \urlstyle{same}
+  \usepackage{etoolbox}
+  \usepackage{seqsplit}
+  \newcommand{\ndsbibhref}[2]{\ndsoldhref{#1}{\nolinkurl{#2}}}
+  \AtBeginEnvironment{CSLReferences}{\let\ndsoldhref\href\let\href\ndsbibhref}
+  \let\ndsoldtexttt\texttt
+  \renewcommand{\texttt}[1]{{\ttfamily\seqsplit{#1}}}
+---

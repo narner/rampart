@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+hf-export/
+
+# Native bench: regenerable held-out data (manifest is committed, data is not)
+eval/bench/data/
+eval/bench/runs/*/predictions.jsonl
+
+# WebGPU harness: generated browser bundle (source is webgpu/entry.ts) and
+# hardware-dependent latency runs (regenerate with `bun run bench:webgpu`)
+eval/bench/webgpu/bundle.js
+eval/bench/runs/*/latency.json
+
+**/__pycache__/
+.wrangler
