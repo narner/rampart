@@ -24,6 +24,8 @@ interface RawEntity {
   readonly start: number;
   readonly end: number;
   readonly word: string;
+  /** Index into `[CLS] + content + [SEP]`; used for tokenizer-backed offset recovery. */
+  readonly index?: number;
 }
 
 /** Counts the model tokens in a string, excluding the [CLS]/[SEP] specials. */
@@ -39,6 +41,8 @@ export type TokenCounter = (text: string) => number;
 export interface TokenClassifier {
   (text: string, options?: { aggregation_strategy?: "simple" | "first" | "max" }): Promise<RawEntity[]>;
   countTokens?: TokenCounter;
+  /** WordPiece tokens for `text` (no specials); drives index→char offset recovery. */
+  tokenize?: (text: string) => readonly string[];
 }
 
 /** Maps model entity groups to our labels. Unknown groups are dropped. */
@@ -149,10 +153,16 @@ export async function loadNerClassifier(options: NerOptions = {}): Promise<Token
   // always carries a tokenizer; guard anyway so an unexpected runtime degrades to
   // the single-window path rather than throwing mid-detection.
   const tokenizer = (classifier as unknown as {
-    tokenizer?: { encode?: (t: string, o?: { add_special_tokens?: boolean }) => number[] };
+    tokenizer?: {
+      encode?: (t: string, o?: { add_special_tokens?: boolean }) => number[];
+      tokenize?: (t: string) => string[];
+    };
   }).tokenizer;
   if (tokenizer?.encode) {
     adapter.countTokens = (text) => tokenizer.encode!(text, { add_special_tokens: false }).length;
+  }
+  if (tokenizer?.tokenize) {
+    adapter.tokenize = (text) => tokenizer.tokenize!(text);
   }
   return adapter;
 }
@@ -330,12 +340,10 @@ function fitCharsToBudget(
  * Handles two pipeline output shapes:
  *  - aggregated (`entity_group` + char `start`/`end`) — when the runtime applied
  *    `simple` aggregation; offsets are used directly.
- *  - raw BIO tokens (`entity` = `B-GIVEN_NAME`/`I-GIVEN_NAME`, no offsets) — what
- *    transformers.js emits here. The token `word` is accent-folded, so we locate
- *    it in a matching folded projection of the input and project the span back to
- *    raw offsets through an offset map. A naive search against the unfolded text
- *    fails on every accented character, which drops spans (leaks) and lets the
- *    offset cursor desync into multi-line, paragraph-swallowing spans.
+ *  - raw BIO tokens (`entity` = `B-GIVEN_NAME`/`I-GIVEN_NAME`, no char offsets) —
+ *    what transformers.js emits here. When the runtime supplies a token `index`,
+ *    char offsets come from a tokenizer walk; otherwise the folded `word` is
+ *    located in a matching folded projection (accent-safe fallback).
  */
 async function detectNerWindow(
   raw: string,
@@ -347,8 +355,10 @@ async function detectNerWindow(
   // `inferText` and `raw` are the same length (hyphen→space is 1:1), so offsets
   // recovered against this folded projection address `raw` too.
   const folded = foldForModel(inferText);
+  const indexOffsets =
+    classifier.tokenize === undefined ? undefined : buildTokenIndexOffsets(folded, classifier.tokenize(inferText));
   const candidates: Span[] = [];
-  for (const entity of mergeBioTokens(entities, folded)) {
+  for (const entity of mergeBioTokens(entities, folded, indexOffsets)) {
     const label = GROUP_TO_LABEL[entity.group.toUpperCase()];
     if (label === undefined) continue;
     if (entity.score < EXTEND_SCORE || entity.end <= entity.start) continue;
@@ -413,14 +423,57 @@ function foldForModel(raw: string): FoldedProjection {
 }
 
 /**
+ * Map each pipeline token index (`[CLS]` = 0, content, `[SEP]` last) to char
+ * offsets in the raw input. The tokenizer emits WordPiece tokens in the model's
+ * *folded* space (lowercase + accent-stripped), so the walk is performed against
+ * the folded projection and projected back to raw offsets through its offset
+ * map. This both handles accented input (where folded/raw lengths differ) and
+ * resolves duplicate substrings — the second `123` lands on the address token,
+ * not the first digit run.
+ */
+function buildTokenIndexOffsets(
+  folded: FoldedProjection,
+  contentTokens: readonly string[],
+): ReadonlyArray<readonly [number, number]> {
+  const offsets: [number, number][] = [[0, 0]];
+  let cursor = 0;
+  for (const token of contentTokens) {
+    const piece = token.startsWith("##") ? token.slice(2) : token;
+    const at = token.startsWith("##") ? cursor : folded.text.indexOf(piece, cursor);
+    if (piece.length === 0 || at < 0 || at + piece.length > folded.text.length) {
+      offsets.push([0, 0]);
+      continue;
+    }
+    offsets.push([folded.rawStart[at], folded.rawEnd[at + piece.length - 1]]);
+    cursor = at + piece.length;
+  }
+  offsets.push([0, 0]);
+  return offsets;
+}
+
+function offsetFromTokenIndex(
+  indexOffsets: ReadonlyArray<readonly [number, number]> | undefined,
+  index: number | undefined,
+): readonly [number, number] | null {
+  if (indexOffsets === undefined || index === undefined) return null;
+  const pair = indexOffsets[index];
+  if (pair === undefined || pair[0] === pair[1]) return null;
+  return pair;
+}
+
+/**
  * Normalize either output shape into raw-offset entities. Aggregated rows carry
  * offsets in the model-input (unfolded) coordinate system, so they are used
  * directly. Raw BIO tokens are merged (B starts a span, matching I extends it);
- * each token's folded `word` is located in the folded projection via a
- * forward-advancing search — so repeated words map to distinct offsets — and the
- * folded span is projected back to raw through the projection's offset map.
+ * when the runtime supplies a token `index`, char offsets come from the
+ * tokenizer walk. Otherwise each token's folded `word` is located in the folded
+ * projection via a forward-advancing search and projected back to raw.
  */
-function mergeBioTokens(entities: RawEntity[], folded: FoldedProjection): AggregatedEntity[] {
+function mergeBioTokens(
+  entities: RawEntity[],
+  folded: FoldedProjection,
+  indexOffsets?: ReadonlyArray<readonly [number, number]>,
+): AggregatedEntity[] {
   const out: AggregatedEntity[] = [];
   let cursor = 0;
   let current: (AggregatedEntity & { count: number }) | null = null;
@@ -443,15 +496,28 @@ function mergeBioTokens(entities: RawEntity[], folded: FoldedProjection): Aggreg
     if (rawLabel === undefined) continue;
     const { prefix, base } = stripBio(rawLabel);
 
-    const word = (entity.word ?? "").replace(/^##/, "").toLowerCase();
-    if (!word) continue;
-    const at = folded.text.indexOf(word, cursor);
-    if (at < 0) continue;
-    const start = folded.rawStart[at];
-    const end = folded.rawEnd[at + word.length - 1];
-    cursor = at + word.length;
+    const indexed = offsetFromTokenIndex(indexOffsets, entity.index);
+    let start: number;
+    let end: number;
+    if (indexed !== null) {
+      [start, end] = indexed;
+    } else {
+      const word = (entity.word ?? "").replace(/^##/, "").toLowerCase();
+      if (!word) continue;
+      const at = folded.text.indexOf(word, cursor);
+      if (at < 0) continue;
+      start = folded.rawStart[at];
+      end = folded.rawEnd[at + word.length - 1];
+      cursor = at + word.length;
+    }
 
-    const continues = current !== null && current.group === base && prefix !== "B";
+    // A `##` piece is a WordPiece *continuation* of the previous token's word,
+    // so it always extends the current span when the base label matches — even
+    // when the model mislabels it `B-` (common on accented words: "Ångström" is
+    // emitted as `ang`(B-SURNAME) + `##strom`(B-SURNAME)). Treating that `B-` as
+    // a new span fractures one name into pieces that then drift through repair.
+    const isSubword = (entity.word ?? "").startsWith("##");
+    const continues = current !== null && current.group === base && (prefix !== "B" || isSubword);
     if (continues && current !== null) {
       current.end = end;
       current.score += entity.score;
@@ -499,7 +565,7 @@ function repairSpans(raw: string, spans: readonly Span[], anchorScore: number): 
     kept = merged;
 
     for (let i = 0; i < kept.length; i++) {
-      const repaired = rescueCapitalizedParticles(raw, kept[i]);
+      const repaired = rescueCapitalizedParticles(raw, kept[i], kept, i);
       if (repaired.start !== kept[i].start || repaired.end !== kept[i].end) {
         kept[i] = repaired;
         changed = true;
@@ -557,22 +623,39 @@ function mergeAdjacentConnectors(raw: string, spans: readonly Span[]): Span[] {
   return merged;
 }
 
-function rescueCapitalizedParticles(raw: string, span: Span): Span {
+function rescueCapitalizedParticles(raw: string, span: Span, all: readonly Span[] = [], selfIndex = -1): Span {
   if (!PERSON_LABELS.has(span.label)) return span;
+
+  // Don't extend into a region already claimed by another kept span — that
+  // territory is its own entity (e.g. a SURNAME beside a GIVEN_NAME). Rescue is
+  // only for *untagged* particles, so clamp to the nearest neighbor boundary.
+  let leftBound = 0;
+  let rightBound = raw.length;
+  for (let i = 0; i < all.length; i++) {
+    if (i === selfIndex) continue;
+    const other = all[i];
+    if (other.end <= span.start && other.end > leftBound) leftBound = other.end;
+    if (other.start >= span.end && other.start < rightBound) rightBound = other.start;
+  }
 
   let start = span.start;
   let end = span.end;
   const left = LEFT_PARTICLE_RE.exec(raw.slice(0, start));
   // Extend left across the connector, but let a period through only when the
   // particle is a one-letter initial ("J.", "R."), never a word ("Dr.", "St.").
-  if (left !== null && CONNECTOR_RE.test(left[2]) && (!left[2].includes(".") || left[1].length === 1)) {
+  if (
+    left !== null &&
+    CONNECTOR_RE.test(left[2]) &&
+    (!left[2].includes(".") || left[1].length === 1) &&
+    start - left[0].length >= leftBound
+  ) {
     start -= left[0].length;
   }
 
   const right = RIGHT_PARTICLE_RE.exec(raw.slice(end));
   // Never extend right across a period: it always crosses a sentence boundary
   // ("Garcia. I", "Chen. After"). Trailing initials are reached via space.
-  if (right !== null && !right[1].includes(".")) {
+  if (right !== null && !right[1].includes(".") && end + right[0].length <= rightBound) {
     end += right[0].length;
   }
 

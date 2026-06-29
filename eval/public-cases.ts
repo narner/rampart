@@ -409,4 +409,35 @@ export const PUBLIC_E2E_CASES: readonly PublicEvalCase[] = [
     ],
     publicTerms: ["age 29", "$52,000"],
   },
+  {
+    id: "chat-accented-name-address",
+    input: "My name is Renée Müller and I live at 1234 Cárdenas Boulevard.",
+    privateTerms: [
+      { text: "Renée", label: "GIVEN_NAME" },
+      { text: "Müller", label: "SURNAME" },
+      { text: "1234", label: "BUILDING_NUMBER" },
+      { text: "Cárdenas Boulevard", label: "STREET_NAME" },
+    ],
+    publicTerms: [],
+  },
+  {
+    id: "chat-accented-name-phone",
+    input: "Please contact José Ångström at 305-201-0143 about the appointment.",
+    privateTerms: [
+      { text: "José", label: "GIVEN_NAME" },
+      { text: "Ångström", label: "SURNAME" },
+      { text: "305-201-0143", label: "PHONE" },
+    ],
+    publicTerms: ["appointment"],
+  },
+  {
+    id: "chat-duplicate-digit-run-address",
+    input: "Call me at 646-555-0199. I live at 1234 Maple Street.",
+    privateTerms: [
+      { text: "646-555-0199", label: "PHONE" },
+      { text: "1234", label: "BUILDING_NUMBER" },
+      { text: "Maple Street", label: "STREET_NAME" },
+    ],
+    publicTerms: [],
+  },
 ];
