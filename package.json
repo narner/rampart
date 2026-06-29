@@ -1,6 +1,6 @@
 {
   "name": "@nationaldesignstudio/rampart",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Rampart — client-side PII redaction for AI assistants: deterministic recognizers + a 14.7 MB ONNX classifier (transformers.js), default-deny policy, and reversible placeholders. Runs entirely in the browser.",
   "license": "CC-BY-4.0",
   "homepage": "https://github.com/nationaldesignstudio/rampart#readme",
