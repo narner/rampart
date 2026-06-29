@@ -91,7 +91,7 @@ The runtime ships as [`@nationaldesignstudio/rampart`](https://www.npmjs.com/pac
 import { createGuard } from "@nationaldesignstudio/rampart";
 
 const guard = await createGuard();
-const { redacted } = await guard.redact("My name is Alex Rivera and my SSN is 472-81-0094.");
+const { text } = await guard.protect("My name is Alex Rivera and my SSN is 472-81-0094.");
 // → "My name is [GIVEN_NAME_1] [SURNAME_1] and my SSN is [SSN_1]."
 ```
 
