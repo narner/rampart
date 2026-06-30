@@ -17,6 +17,7 @@ PANDOC_FLAGS := --standalone \
 	--citeproc \
 	--metadata-file=$(META) \
 	--bibliography=$(BIB) \
+	--lua-filter=no-table-widths.lua \
 	--top-level-division=section \
 	--pdf-engine=xelatex
 
