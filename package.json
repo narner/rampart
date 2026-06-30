@@ -66,7 +66,7 @@
     "!eval/bench/runs/*/latency.json"
   ],
   "scripts": {
-    "build": "bun build ./index.ts ./src/ner/worker.ts --outdir ./dist --format esm --sourcemap --target browser && tsc -p tsconfig.build.json",
+    "build": "bun build ./index.ts ./src/ner/worker.ts --outdir ./dist --format esm --sourcemap --target browser --external @huggingface/transformers && tsc -p tsconfig.build.json",
     "eval:public": "bun eval/run-public-eval.ts",
     "eval:public:strict": "bun eval/run-public-eval.ts --strict",
     "bench:fetch": "bun eval/bench/fetch.ts",
