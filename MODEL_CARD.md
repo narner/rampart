@@ -97,12 +97,24 @@ const { text } = await guard.protect("My name is Alex Rivera and my SSN is 472-8
 
 ## Training data
 
+The shipped model is trained on a **cumulative three-source mix**, added in the
+order below; the selection matrix found that folding in all three sources
+produced every top-recall configuration, with breadth of corpus mattering more
+than the volume of any single source.
+
 | Source                                                                                                       | Rows used                        | License    | Role                                                                                                                                       |
 | ------------------------------------------------------------------------------------------------------------ | -------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`ai4privacy/pii-masking-openpii-1.5m`](https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1.5m) | 643,756 train + 100,000 held-out | CC BY 4.0  | Realistic chat-style PII; 7 Latin-script languages (en, es, fr, de, it, pt, nl); the OpenPII schema mapped to our 35-label BIO schema (17 entity types) |
-| Synthetic generator                                                                                          | 20,000 train                     | Apache-2.0 | Class reinforcement for the 17 entity types — accent-bearing names from curated first- and last-name pools and templated structured fields, generated deliberately messy (typos, all-caps, voice-dictated and pasted-from-form phrasing, multilingual mixing, contradictory/duplicated values) so the model sees realistic disordered input, not just clean OpenPII prose |
+| Synthetic conversation corpus (in-house)                                                                     | ~250,000 conversations           | CC BY 4.0  | Primary in-house corpus. Chat-style messages generated to be **deliberately messy and realistic**: low-effort/typo-prone text, voice-dictated phrasing, values pasted out of forms, multilingual mixing, and contradictory/duplicated/wrong-field entries, across a range of assistant personas — so the model learns to catch fragmented PII in disordered chat rather than only clean prose. Covers all 17 entity types. |
+| OCR'd-document corpus (in-house)                                                                             | in-house, span-tagged            | CC BY 4.0  | Scanned and photographed forms, IDs, and documents run through OCR and then **span-tagged** with the 17 entity types. Adds OCR noise (character confusions, broken line wraps, stray glyphs) and form-style field layouts absent from the conversational sources, hardening recall on values lifted out of documents. |
+| [`ai4privacy/pii-masking-openpii-1.5m`](https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1.5m) | full corpus: ~1.4M train + 100,000 held-out | CC BY 4.0  | Public AI4Privacy template corpus, used in **full** — its `train` and `validation` splits are pooled, deduplicated by `uid`, shuffled with a fixed seed, then split into all-but-100k for training (~1.4M rows) and a 100k held-out. No training cap and no language filter are applied; this is the entire deduplicated corpus, not a subsampled slice. Broad multilingual entropy across 7 Latin-script languages (en, es, fr, de, it, pt, nl); the OpenPII schema mapped to our 35-label BIO schema (17 entity types). Also the source of the held-out evaluation split below. |
 
-The held-out 100,000 rows are split into two non-overlapping subsets, seeded for full reproducibility:
+The synthetic and OCR'd corpora supply the disordered, document-noisy inputs
+OpenPII lacks (its conversations are clean and well-formed); OpenPII supplies the
+multilingual breadth and the held-out test set. The exact synthetic/OCR mix and
+volume were chosen by the end-to-end selection matrix, not assumed — see the
+project whitepaper (§3.1, §3.5, §4.2) for the ablation that fixed the recipe.
+
+The held-out 100,000 rows (from the AI4Privacy corpus) are split into two non-overlapping subsets, seeded for full reproducibility:
 
 - **10,000 rows** for recall-floor threshold tuning.
 - **30,000 rows** for the headline test results below (per-language row counts in the eval table).
